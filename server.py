@@ -3,10 +3,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
-from fastapi import UploadFile, File, Form
 import os
+import logging
+from fastapi.staticfiles import StaticFiles
+from fastapi import UploadFile, File, Form
+
+
 
 app = FastAPI()
+
+logger = logging.getLogger("uvicorn.error")
+
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Exposer /uploads/... publiquement
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -116,31 +129,54 @@ async def upload_media(
     lat: float = Form(...),
     lng: float = Form(...),
 ):
-    """
-    Reçoit un média (image/vidéo) + infos de position.
-    Pour le moment, stocke simplement les infos en mémoire.
-    """
-    # Pour tester, on ne sauvegarde pas physiquement le fichier.
-    # On crée une URL factice (sinon ton front casse).
-    url = f"/static/uploads/{file.filename}"
+    logger.info(">>> /api/media called")
 
-    media = {
-        "id": len(MEDIA_DB) + 1,
-        "title": title,
-        "description": description,
-        "trackId": trackId,
-        "lat": lat,
-        "lng": lng,
-        "url": url,
-        "type": file.content_type,
-    }
-    MEDIA_DB.append(media)
-    return media
+    try:
+        logger.info(
+            "Media payload: title=%r, description=%r, trackId=%r, lat=%s, lng=%s, "
+            "filename=%r, content_type=%r",
+            title,
+            description,
+            trackId,
+            lat,
+            lng,
+            getattr(file, "filename", None),
+            getattr(file, "content_type", None),
+        )
+
+        # 1) Sauvegarder le fichier sur le disque de Render
+        file_location = os.path.join(UPLOAD_DIR, file.filename)
+        with open(file_location, "wb") as f:
+            contents = await file.read()
+            f.write(contents)
+
+        # 2) URL publique (relative) vers ce fichier
+        url = f"/uploads/{file.filename}"
+
+        media = {
+            "id": len(MEDIA_DB) + 1,
+            "title": title,
+            "description": description,
+            "trackId": trackId,
+            "lat": lat,
+            "lng": lng,
+            "url": url,
+            "type": file.content_type,
+        }
+        MEDIA_DB.append(media)
+
+        logger.info("Media created: %s", media)
+        return media
+
+    except Exception as e:
+        logger.exception("Erreur dans /api/media: %s", e)
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")
 
 
 @app.get("/api/media")
 def list_media():
-    """Renvoie tous les médias enregistrés (en mémoire)."""
+    logger.info(">>> GET /api/media called, count=%d", len(MEDIA_DB))
     return MEDIA_DB
 
 
