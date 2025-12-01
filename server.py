@@ -120,6 +120,7 @@ def reset_track(track_id: str = "live", request: Request = None, token: Optional
 # Stockage temporaire en mémoire (à remplacer plus tard par du disque/S3)
 MEDIA_DB = []
 
+
 @app.post("/api/media")
 async def upload_media(
     file: UploadFile = File(...),
@@ -132,6 +133,8 @@ async def upload_media(
     logger.info(">>> /api/media called")
 
     try:
+        # Sécurise le nom de fichier
+        filename = os.path.basename(file.filename)
         logger.info(
             "Media payload: title=%r, description=%r, trackId=%r, lat=%s, lng=%s, "
             "filename=%r, content_type=%r",
@@ -140,18 +143,19 @@ async def upload_media(
             trackId,
             lat,
             lng,
-            getattr(file, "filename", None),
+            filename,
             getattr(file, "content_type", None),
         )
 
-        # 1) Sauvegarder le fichier sur le disque de Render
-        file_location = os.path.join(UPLOAD_DIR, file.filename)
+        # 1) Sauvegarder le fichier dans le dossier uploads/
+        file_location = os.path.join(UPLOAD_DIR, filename)
         with open(file_location, "wb") as f:
             contents = await file.read()
             f.write(contents)
 
-        # 2) URL publique (relative) vers ce fichier
-        url = f"/uploads/{file.filename}"
+        # 2) URL **relative** vers ce fichier
+        # >>> très important : on renvoie /uploads/filename, PAS juste le nom !
+        url = f"/uploads/{filename}"
 
         media = {
             "id": len(MEDIA_DB) + 1,
@@ -172,6 +176,7 @@ async def upload_media(
         logger.exception("Erreur dans /api/media: %s", e)
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail=f"Erreur interne: {e}")
+
 
 
 @app.get("/api/media")
